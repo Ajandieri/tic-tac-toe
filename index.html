@@ -1,0 +1,89 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tic-Tac-Toe AI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cherry+Bomb+One&family=Poppins:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+<script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://esm.sh/@google/genai@^1.9.0",
+    "mqtt": "https://esm.sh/mqtt@5.3.4"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body>
+    <div id="app-container">
+        <h1><span class="title-tic">Tic</span>-Tac-<span class="title-toe">Toe</span></h1>
+
+        <!-- Main Menu -->
+        <div id="main-menu">
+            <div class="menu-buttons">
+                <button id="play-vs-cpu-btn" class="menu-btn">Play vs Computer</button>
+                <button id="play-2-player-btn" class="menu-btn">2 Player Mode</button>
+                <button id="host-game-btn" class="menu-btn">Host Your Game</button>
+                <button id="join-game-btn" class="menu-btn">Join a Game</button>
+            </div>
+        </div>
+
+        <!-- Multiplayer Lobby -->
+        <div id="multiplayer-lobby" class="hidden">
+             <h2 id="lobby-title"></h2>
+             <div id="host-view" class="hidden">
+                 <p>Share this code with a friend:</p>
+                 <div class="room-code-wrapper">
+                    <div id="room-code-display"></div>
+                    <button id="copy-code-btn" class="icon-btn" aria-label="Copy room code" title="Copy room code">
+                        <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="currentColor"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                    </button>
+                 </div>
+                 <p id="waiting-msg">Waiting for opponent...</p>
+             </div>
+             <div id="join-view" class="hidden">
+                <p>Enter the room code from your friend:</p>
+                <input type="text" id="room-code-input" placeholder="Enter Code" maxlength="5" />
+                <button id="join-room-submit-btn" class="restart-btn">Join</button>
+             </div>
+             <button id="back-to-menu-btn" class="restart-btn back-btn">Back to Menu</button>
+        </div>
+
+
+        <!-- Game View -->
+        <div id="game-view" class="hidden">
+            <div id="score-container" class="score-container">
+                <p><span id="player-x-label" class="player-x">X (You)</span>: <span id="score-x">0</span></p>
+                <p><span id="player-o-label" class="player-o">O (CPU)</span>: <span id="score-o">0</span></p>
+            </div>
+             <p id="status-display" class="status" role="status">Player X's turn</p>
+            <div id="board" class="board">
+                <button class="cell" data-index="0" aria-label="Cell 0"></button>
+                <button class="cell" data-index="1" aria-label="Cell 1"></button>
+                <button class="cell" data-index="2" aria-label="Cell 2"></button>
+                <button class="cell" data-index="3" aria-label="Cell 3"></button>
+                <button class="cell" data-index="4" aria-label="Cell 4"></button>
+                <button class="cell" data-index="5" aria-label="Cell 5"></button>
+                <button class="cell" data-index="6" aria-label="Cell 6"></button>
+                <button class="cell" data-index="7" aria-label="Cell 7"></button>
+                <button class="cell" data-index="8" aria-label="Cell 8"></button>
+            </div>
+            <div class="button-container">
+                <button id="restart-button" class="restart-btn">New Round</button>
+                <button id="main-menu-button" class="restart-btn">Main Menu</button>
+                <button id="reset-score-button" class="restart-btn">Reset Score</button>
+            </div>
+        </div>
+    </div>
+    <footer>
+        <p>Game made by <span class="creator-name">Andria Jandieri</span> using Google AI Studio</p>
+    </footer>
+    <script type="module" src="index.tsx"></script>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
