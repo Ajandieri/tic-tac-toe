@@ -1,5 +1,6 @@
 
-
+import { GoogleGenAI, Type } from "@google/genai";
+import mqtt from 'mqtt';
 
 document.addEventListener('DOMContentLoaded', () => {
     // --- DOM Elements ---
@@ -44,7 +45,15 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     let gameMode = null; // 'vs-cpu', 'local-multiplayer', 'multiplayer'
     let playerSymbol = 'X'; // For multiplayer, am I X or O?
-    let channel = null;
+    
+    // --- Multiplayer State ---
+    const brokerUrl = 'wss://broker.hivemq.com:8884/mqtt';
+    let client = null;
+    let roomCode = null;
+
+    // Gemini AI
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const model = 'gemini-2.5-flash';
 
     const winningConditions = [
         [0, 1, 2], [3, 4, 5], [6, 7, 8], // rows
@@ -89,53 +98,53 @@ document.addEventListener('DOMContentLoaded', () => {
         updateStatus();
 
         if (gameMode === 'vs-cpu' && currentPlayer === 'O' && gameActive) {
-            // Use a short delay to make the CPU's move feel more natural
-            setTimeout(getComputerMove, 500);
+            // Disable board during AI turn to prevent user input
+            cells.forEach(cell => cell.setAttribute('disabled', 'true'));
+            getComputerMove();
         }
     }
 
-    function getComputerMove() {
-        // 1. Check for a winning move for 'O'
-        for (let i = 0; i < gameState.length; i++) {
-            if (gameState[i] === "") {
-                const tempState = [...gameState];
-                tempState[i] = 'O';
-                if (checkWinner(tempState) === 'O') {
-                    handleCellPlayed(i);
-                    return;
+    async function getComputerMove() {
+        statusDisplay.textContent = 'Computer is thinking...';
+        
+        const prompt = `You are a medium-level Tic-Tac-Toe AI opponent. It's your turn to play as 'O'. The board is represented by this array: ${JSON.stringify(gameState)}. 'X' is the human opponent. Empty strings "" are available squares (indices 0-8). Your goal is to play well, blocking wins and taking opportunities to win yourself, but you don't need to play with flawless, perfect logic every single time. A smart, but not perfect, move is ideal. Return your move as a JSON object with a single "move" key, indicating the index of your chosen square (0-8). Only choose an index that corresponds to an empty string in the board array.`;
+        
+        try {
+            const response = await ai.models.generateContent({
+                model: model,
+                contents: prompt,
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: Type.OBJECT,
+                        properties: {
+                            move: {
+                                type: Type.INTEGER,
+                                description: 'The board index (0-8) for the AI\'s move.'
+                            }
+                        },
+                        required: ['move']
+                    }
                 }
+            });
+
+            const jsonResponse = JSON.parse(response.text);
+            const move = jsonResponse.move;
+
+            if (typeof move === 'number' && move >= 0 && move <= 8 && gameState[move] === "") {
+                handleCellPlayed(move);
+            } else {
+                // Fallback if AI gives invalid move
+                makeRandomValidMove();
             }
+        } catch (error) {
+            console.error("AI Error:", error);
+            statusDisplay.textContent = 'The AI is stumped! Making a random move.';
+            makeRandomValidMove();
+        } finally {
+            // Re-enable board after AI move
+            cells.forEach(cell => cell.removeAttribute('disabled'));
         }
-
-        // 2. Check to block 'X' from winning
-        for (let i = 0; i < gameState.length; i++) {
-            if (gameState[i] === "") {
-                const tempState = [...gameState];
-                tempState[i] = 'X';
-                if (checkWinner(tempState) === 'X') {
-                    handleCellPlayed(i);
-                    return;
-                }
-            }
-        }
-
-        // 3. Take the center if available
-        if (gameState[4] === "") {
-            handleCellPlayed(4);
-            return;
-        }
-
-        // 4. Take a random available corner
-        const corners = [0, 2, 6, 8];
-        const availableCorners = corners.filter(index => gameState[index] === "");
-        if (availableCorners.length > 0) {
-            const randomCorner = availableCorners[Math.floor(Math.random() * availableCorners.length)];
-            handleCellPlayed(randomCorner);
-            return;
-        }
-
-        // 5. Take any remaining available cell (sides)
-        makeRandomValidMove();
     }
 
     function makeRandomValidMove() {
@@ -146,27 +155,23 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Helper function to check for a winner on a given board state
-    function checkWinner(board) {
+    function handleResultValidation() {
+        let roundWon = false;
+        let winningCombination = [];
         for (let i = 0; i < winningConditions.length; i++) {
-            const [a, b, c] = winningConditions[i];
-            if (board[a] && board[a] === board[b] && board[a] === board[c]) {
-                return board[a]; // Returns 'X' or 'O'
+            const winCondition = winningConditions[i];
+            const a = gameState[winCondition[0]];
+            const b = gameState[winCondition[1]];
+            const c = gameState[winCondition[2]];
+            if (a === '' || b === '' || c === '') continue;
+            if (a === b && b === c) {
+                roundWon = true;
+                winningCombination = winCondition;
+                break;
             }
         }
-        return null; // No winner
-    }
 
-    function handleResultValidation() {
-        const winner = checkWinner(gameState);
-        
-        if (winner) {
-            const winningCombination = winningConditions.find(cond => 
-                gameState[cond[0]] === winner && 
-                gameState[cond[1]] === winner && 
-                gameState[cond[2]] === winner
-            );
-
+        if (roundWon) {
             score[currentPlayer]++;
             updateScoreDisplay();
             saveScores();
@@ -220,26 +225,21 @@ document.addEventListener('DOMContentLoaded', () => {
         const clickedCell = event.currentTarget;
         const clickedCellIndex = parseInt(clickedCell.getAttribute('data-index'));
 
-        // Prevent human from playing during CPU's turn
-        if (gameMode === 'vs-cpu' && currentPlayer === 'O') {
-            return;
-        }
-
         if(gameMode === 'multiplayer') {
             if (currentPlayer !== playerSymbol) {
                 // Not your turn
                 return;
             }
             if (gameState[clickedCellIndex] === "") {
-                channel.postMessage({type: 'move', index: clickedCellIndex});
+                client.publish(`tictactoe-game/${roomCode}`, JSON.stringify({type: 'move', index: clickedCellIndex}));
             }
         }
         handleCellPlayed(clickedCellIndex);
     }
 
     function handleRestartGame() {
-        if(gameMode === 'multiplayer' && channel) {
-            channel.postMessage({type: 'restart'});
+        if(gameMode === 'multiplayer' && client) {
+            client.publish(`tictactoe-game/${roomCode}`, JSON.stringify({type: 'restart'}));
         }
         resetBoard();
     }
@@ -254,7 +254,7 @@ document.addEventListener('DOMContentLoaded', () => {
             cell.classList.remove('x', 'o', 'winning-cell');
             cell.removeAttribute('disabled');
         });
-        updateStatus();
+        updateStatus(); // Update status after resetting state
     }
     
     function handleResetScore() {
@@ -294,70 +294,16 @@ document.addEventListener('DOMContentLoaded', () => {
         showScreen('game');
     }
 
-    // --- Multiplayer (Broadcast Channel) ---
-    function hostGame() {
-        const code = Math.random().toString(36).substring(2, 7).toUpperCase();
-        roomCodeDisplay.textContent = code;
-        lobbyTitle.textContent = 'Host Game';
-        hostView.classList.remove('hidden');
-        joinView.classList.add('hidden');
-        showScreen('lobby');
-
-        channel = new BroadcastChannel(`tictactoe-${code}`);
-        channel.onmessage = (event) => {
-            if(event.data.type === 'join_request') {
-                playerSymbol = 'X';
-                channel.postMessage({type: 'join_accepted'});
-                setupMultiplayer();
-            }
-            handleChannelMessage(event);
-        };
+    // --- Multiplayer (MQTT) ---
+    function mqttGameMessageHandler(topic, payload) {
+        if (topic !== `tictactoe-game/${roomCode}`) return;
+        const message = JSON.parse(payload.toString());
+        handleRemoteMessage(message);
     }
 
-    function joinGameLobby() {
-        lobbyTitle.textContent = 'Join Game';
-        hostView.classList.add('hidden');
-        joinView.classList.remove('hidden');
-        showScreen('lobby');
-    }
-
-    function joinGame() {
-        const code = roomCodeInput.value.toUpperCase();
-        if(!code) return;
-
-        joinRoomSubmitBtn.disabled = true;
-        joinRoomSubmitBtn.textContent = 'Joining...';
-        
-        channel = new BroadcastChannel(`tictactoe-${code}`);
-        
-        let joinSuccessful = false;
-
-        const joinTimeout = setTimeout(() => {
-            if (!joinSuccessful) {
-                channel.close();
-                channel = null;
-                alert('Invalid or expired room code. Please try again.');
-                joinRoomSubmitBtn.disabled = false;
-                joinRoomSubmitBtn.textContent = 'Join';
-                roomCodeInput.value = '';
-            }
-        }, 3000);
-
-        channel.onmessage = (event) => {
-             if(event.data.type === 'join_accepted') {
-                joinSuccessful = true;
-                clearTimeout(joinTimeout);
-                playerSymbol = 'O';
-                setupMultiplayer();
-            }
-            handleChannelMessage(event);
-        };
-        channel.postMessage({type: 'join_request'});
-    }
-    
-    function handleChannelMessage(event) {
-        if (!channel) return;
-        const { type, index } = event.data;
+    function handleRemoteMessage(data) {
+        if (!client) return;
+        const { type, index } = data;
         if(type === 'move') {
             handleCellPlayed(index);
         } else if (type === 'restart') {
@@ -370,23 +316,138 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     }
-    
+
+    function hostGame() {
+        const code = Math.random().toString(36).substring(2, 7).toUpperCase();
+        roomCodeDisplay.textContent = code;
+        lobbyTitle.textContent = 'Host Game';
+        hostView.classList.remove('hidden');
+        joinView.classList.add('hidden');
+        showScreen('lobby');
+
+        roomCode = code;
+        const topic = `tictactoe-game/${roomCode}`;
+        client = mqtt.connect(brokerUrl);
+
+        const hostInitialMessageHandler = (receivedTopic, payload) => {
+            if (receivedTopic !== topic) return;
+            const message = JSON.parse(payload.toString());
+
+            if (message.type === 'join_request') {
+                playerSymbol = 'X';
+                client.publish(topic, JSON.stringify({type: 'join_accepted'}));
+                client.off('message', hostInitialMessageHandler);
+                client.on('message', mqttGameMessageHandler);
+                setupMultiplayer();
+            }
+        };
+
+        client.on('connect', () => {
+            client.subscribe(topic, (err) => {
+                if (err) {
+                    console.error('MQTT Subscribe error:', err);
+                    alert('Error hosting game. Please try again.');
+                    cleanupAndGoToMenu();
+                }
+            });
+        });
+
+        client.on('message', hostInitialMessageHandler);
+
+        client.on('error', (err) => {
+            console.error('MQTT Connection Error:', err);
+            alert('Could not connect to the game service. Please check your internet connection and try again.');
+            cleanupAndGoToMenu();
+        });
+    }
+
+    function joinGameLobby() {
+        lobbyTitle.textContent = 'Join Game';
+        hostView.classList.add('hidden');
+        joinView.classList.remove('hidden');
+        showScreen('lobby');
+    }
+
+    function joinGame() {
+        const code = roomCodeInput.value.toUpperCase();
+        if(!code) return;
+        
+        joinRoomSubmitBtn.disabled = true;
+        joinRoomSubmitBtn.textContent = 'Joining...';
+        
+        roomCode = code;
+        const topic = `tictactoe-game/${roomCode}`;
+        client = mqtt.connect(brokerUrl);
+        
+        let joinSuccessful = false;
+
+        const joinTimeout = setTimeout(() => {
+            if (!joinSuccessful) {
+                if(client) client.end();
+                client = null;
+                alert('Invalid or expired room code. Please try again.');
+                joinRoomSubmitBtn.disabled = false;
+                joinRoomSubmitBtn.textContent = 'Join';
+                roomCodeInput.value = '';
+            }
+        }, 5000);
+
+        const joinerInitialMessageHandler = (receivedTopic, payload) => {
+            if (receivedTopic !== topic) return;
+            const message = JSON.parse(payload.toString());
+            if (message.type === 'join_accepted') {
+                joinSuccessful = true;
+                clearTimeout(joinTimeout);
+                playerSymbol = 'O';
+                client.off('message', joinerInitialMessageHandler);
+                client.on('message', mqttGameMessageHandler);
+                setupMultiplayer();
+            }
+        };
+
+        client.on('connect', () => {
+            client.subscribe(topic, (err) => {
+                if(err) {
+                    console.error('MQTT Subscribe error:', err);
+                    clearTimeout(joinTimeout);
+                    alert('Error joining game. Please try again.');
+                    cleanupAndGoToMenu();
+                    return;
+                }
+                client.publish(topic, JSON.stringify({type: 'join_request'}));
+            });
+        });
+
+        client.on('message', joinerInitialMessageHandler);
+        
+        client.on('error', (err) => {
+            console.error('MQTT Connection Error:', err);
+            clearTimeout(joinTimeout);
+            alert('Could not connect to the game service. Please check the room code and try again.');
+            joinRoomSubmitBtn.disabled = false;
+            joinRoomSubmitBtn.textContent = 'Join';
+            cleanupAndGoToMenu();
+        });
+    }
+        
     function cleanupAndGoToMenu() {
-        if (channel) {
-            channel.onmessage = null; // Detach listener
-            channel.close();
-            channel = null;
+        if (client) {
+            client.end();
+            client = null;
         }
         gameMode = null;
+        roomCode = null;
         playerSymbol = 'X';
         resetBoard();
         handleResetScore(); // Reset score when returning to menu
         showScreen('menu');
+        joinRoomSubmitBtn.disabled = false;
+        joinRoomSubmitBtn.textContent = 'Join';
     }
 
     function returnToMenu() {
-        if (gameMode === 'multiplayer' && channel) {
-            channel.postMessage({type: 'leave'});
+        if (gameMode === 'multiplayer' && client && roomCode) {
+            client.publish(`tictactoe-game/${roomCode}`, JSON.stringify({type: 'leave'}));
         }
         cleanupAndGoToMenu();
     }
